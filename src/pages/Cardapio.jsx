@@ -693,6 +693,7 @@ export default function Cardapio({ showPedidosAbertos = false }) {
             fontFamily: "'League Spartan', sans-serif",
             fontSize: '1rem',
             fontWeight: categoriaSelecionada === "Todas" ? 700 : 400,
+            color: categoriaSelecionada === "Todas" ? '#000' : 'rgba(0,0,0,0.72)',
             textTransform: 'uppercase',
             opacity: categoriaSelecionada === "Todas" ? 1 : 0.6,
             transform: categoriaSelecionada === "Todas" ? 'scale(1.1)' : 'scale(1)',
@@ -718,6 +719,7 @@ export default function Cardapio({ showPedidosAbertos = false }) {
               border: 'none',
               padding: '5px 15px',
               cursor: 'pointer',
+              color: categoriaSelecionada === cat ? '#000' : 'rgba(0,0,0,0.72)',
               opacity: categoriaSelecionada === cat ? 1 : 0.6,
               transform: categoriaSelecionada === cat ? 'scale(1.1)' : 'scale(1)',
               transition: 'all 0.3s ease',
@@ -728,6 +730,7 @@ export default function Cardapio({ showPedidosAbertos = false }) {
               fontFamily: "'League Spartan', sans-serif",
               fontSize: '1rem',
               fontWeight: categoriaSelecionada === cat ? 700 : 400,
+              color: categoriaSelecionada === cat ? '#000' : 'rgba(0,0,0,0.72)',
               textTransform: 'uppercase'
             }}>
               {cat}

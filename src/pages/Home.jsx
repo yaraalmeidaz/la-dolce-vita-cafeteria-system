@@ -71,7 +71,7 @@ export default function Home() {
   }
 
   return (
-    <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', margin: 0, padding: 0, overflow: 'hidden' }}>
+    <div style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100dvh', minHeight: '100vh', margin: 0, padding: 0, overflow: 'hidden' }}>
       {/* Carrossel de imagens */}
       <div style={{ position: 'absolute', top: 0, left: 0, width: '100%', height: '100%', margin: 0, padding: 0, zIndex: 1 }}>
         {imagens.map((img, index) => (
@@ -216,7 +216,7 @@ export default function Home() {
 
       {/* Botões continuar/sair - sempre na parte inferior quando logado */}
       {user && (
-        <div style={{ position: 'absolute', bottom: '100px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '16px', justifyContent: 'center', alignItems: 'center', zIndex: 3, width: 'min(620px, 92vw)' }}>
+        <div style={{ position: 'absolute', bottom: 'calc(env(safe-area-inset-bottom) + 96px)', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '16px', justifyContent: 'center', alignItems: 'center', zIndex: 3, width: 'min(620px, 92vw)' }}>
           <button onClick={handleContinuar} style={{
             width: '100%',
             height: '56px',
@@ -261,7 +261,7 @@ export default function Home() {
       
       {/* Botões de cadastro/login - sempre na parte inferior */}
       {!user && (
-        <div style={{ position: 'absolute', bottom: '100px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '16px', justifyContent: 'center', alignItems: 'center', zIndex: 3, width: 'min(620px, 92vw)' }}>
+        <div style={{ position: 'absolute', bottom: 'calc(env(safe-area-inset-bottom) + 96px)', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '16px', justifyContent: 'center', alignItems: 'center', zIndex: 3, width: 'min(620px, 92vw)' }}>
           <Link to="/cadastro" style={{ textDecoration: 'none', flex: 1 }}>
             <button style={{
               width: '100%',
@@ -305,7 +305,7 @@ export default function Home() {
       
       {/* Indicadores do carrossel - sempre na parte inferior */}
       {!user && (
-        <div style={{ position: 'absolute', bottom: '30px', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '15px', zIndex: 3 }}>
+        <div style={{ position: 'absolute', bottom: 'calc(env(safe-area-inset-bottom) + 32px)', left: '50%', transform: 'translateX(-50%)', display: 'flex', gap: '15px', zIndex: 3 }}>
           {imagens.map((_, index) => (
             <div
               key={index}
