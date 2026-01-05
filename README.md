@@ -12,7 +12,7 @@ A apresentação em slides está disponível no repositório e pode ser aberta d
 
 *(deploy via GitHub Pages em preparação)*
 
-➡️ https://SEU_USUARIO.github.io/la-dolce-vita
+➡️ https://yaraalmeidaz.github.io/la-dolce-vita-cafeteria-system/
 
 ## ✅ Visão geral
 
