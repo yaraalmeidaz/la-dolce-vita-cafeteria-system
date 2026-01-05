@@ -35,3 +35,39 @@ th, td {
 th {
   background: #f4f4f4;
 }
+
+/* Auth (Login/Cadastro) */
+.auth-input {
+  width: 100%;
+  padding: 14px 18px;
+  font-size: 1rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 6px;
+  outline: none;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+  font-family: 'Montserrat', sans-serif;
+  box-sizing: border-box;
+}
+
+.auth-input:focus {
+  border-color: #2c5aa0;
+  box-shadow: 0 0 0 3px rgba(44, 90, 160, 0.15);
+}
+
+.auth-input--error {
+  border-color: #d32f2f;
+}
+
+.auth-input--error:focus {
+  border-color: #d32f2f;
+  box-shadow: 0 0 0 3px rgba(211, 47, 47, 0.15);
+}
+
+.auth-error {
+  color: #d32f2f;
+  text-align: center;
+  margin: 0 0 20px;
+  font-size: 0.95rem;
+  font-weight: 400;
+  font-family: 'Montserrat', sans-serif;
+}

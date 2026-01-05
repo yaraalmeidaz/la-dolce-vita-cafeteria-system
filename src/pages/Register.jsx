@@ -14,13 +14,35 @@ export default function Register() {
   const [confirmar, setConfirmar] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({
+    nome: false,
+    email: false,
+    telefone: false,
+    senha: false,
+    confirmar: false,
+  });
 
   async function handleSubmit(e) {
     e.preventDefault();
     setError("");
 
+    const nextFieldErrors = {
+      nome: !nome.trim(),
+      email: !email.trim(),
+      telefone: !telefone.trim(),
+      senha: !senha,
+      confirmar: !confirmar,
+    };
+
     if (senha !== confirmar) {
+      setFieldErrors({ ...nextFieldErrors, senha: true, confirmar: true });
       setError("Senhas não conferem");
+      return;
+    }
+
+    setFieldErrors(nextFieldErrors);
+    if (Object.values(nextFieldErrors).some(Boolean)) {
+      setError("Preencha todos os campos");
       return;
     }
 
@@ -30,6 +52,11 @@ export default function Register() {
 
     if (!result.ok) {
       setError(result.message || "Erro ao cadastrar");
+
+      const message = String(result.message || "");
+      if (/e-?mail|email|registered|exist/i.test(message)) {
+        setFieldErrors((prev) => ({ ...prev, email: true }));
+      }
       return;
     }
 
@@ -103,102 +130,65 @@ export default function Register() {
           letterSpacing: '0.08em'
         }}>Cadastro</h2>
 
-        {error && <p style={{ 
-          color: '#d32f2f', 
-          textAlign: 'center', 
-          marginBottom: '20px',
-          fontSize: '0.9rem',
-          fontWeight: 400,
-          fontFamily: "'Montserrat', sans-serif"
-        }}>{error}</p>}
+        {error && <p className="auth-error">{error}</p>}
 
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
           <input 
             placeholder="Nome" 
             value={nome} 
-            onChange={e => setNome(e.target.value)} 
+            onChange={(e) => {
+              setNome(e.target.value);
+              if (fieldErrors.nome) setFieldErrors((prev) => ({ ...prev, nome: false }));
+              if (error) setError("");
+            }} 
             required 
-            style={{
-              padding: '14px 18px',
-              fontSize: '1rem',
-              border: '2px solid #e0e0e0',
-              borderRadius: '6px',
-              outline: 'none',
-              transition: 'all 0.3s ease',
-              fontFamily: "'Montserrat', sans-serif"
-            }}
-            onFocus={(e) => e.target.style.borderColor = '#2c5aa0'}
-            onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
+            className={`auth-input${fieldErrors.nome ? " auth-input--error" : ""}`}
           />
           <input 
             placeholder="Email" 
             value={email} 
-            onChange={e => setEmail(e.target.value)} 
+            onChange={(e) => {
+              setEmail(e.target.value);
+              if (fieldErrors.email) setFieldErrors((prev) => ({ ...prev, email: false }));
+              if (error) setError("");
+            }} 
             required 
-            style={{
-              padding: '14px 18px',
-              fontSize: '1rem',
-              border: '2px solid #e0e0e0',
-              borderRadius: '6px',
-              outline: 'none',
-              transition: 'all 0.3s ease',
-              fontFamily: "'Montserrat', sans-serif"
-            }}
-            onFocus={(e) => e.target.style.borderColor = '#2c5aa0'}
-            onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
+            className={`auth-input${fieldErrors.email ? " auth-input--error" : ""}`}
           />
           <input 
             placeholder="Telefone" 
             value={telefone} 
-            onChange={e => setTelefone(e.target.value)} 
+            onChange={(e) => {
+              setTelefone(e.target.value);
+              if (fieldErrors.telefone) setFieldErrors((prev) => ({ ...prev, telefone: false }));
+              if (error) setError("");
+            }} 
             required 
-            style={{
-              padding: '14px 18px',
-              fontSize: '1rem',
-              border: '2px solid #e0e0e0',
-              borderRadius: '6px',
-              outline: 'none',
-              transition: 'all 0.3s ease',
-              fontFamily: "'Montserrat', sans-serif"
-            }}
-            onFocus={(e) => e.target.style.borderColor = '#2c5aa0'}
-            onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
+            className={`auth-input${fieldErrors.telefone ? " auth-input--error" : ""}`}
           />
           <input 
             type="password" 
             placeholder="Senha" 
             value={senha} 
-            onChange={e => setSenha(e.target.value)} 
+            onChange={(e) => {
+              setSenha(e.target.value);
+              if (fieldErrors.senha) setFieldErrors((prev) => ({ ...prev, senha: false }));
+              if (error) setError("");
+            }} 
             required 
-            style={{
-              padding: '14px 18px',
-              fontSize: '1rem',
-              border: '2px solid #e0e0e0',
-              borderRadius: '6px',
-              outline: 'none',
-              transition: 'all 0.3s ease',
-              fontFamily: "'Montserrat', sans-serif"
-            }}
-            onFocus={(e) => e.target.style.borderColor = '#2c5aa0'}
-            onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
+            className={`auth-input${fieldErrors.senha ? " auth-input--error" : ""}`}
           />
           <input 
             type="password" 
             placeholder="Confirmar senha" 
             value={confirmar} 
-            onChange={e => setConfirmar(e.target.value)} 
+            onChange={(e) => {
+              setConfirmar(e.target.value);
+              if (fieldErrors.confirmar) setFieldErrors((prev) => ({ ...prev, confirmar: false }));
+              if (error) setError("");
+            }} 
             required 
-            style={{
-              padding: '14px 18px',
-              fontSize: '1rem',
-              border: '2px solid #e0e0e0',
-              borderRadius: '6px',
-              outline: 'none',
-              transition: 'all 0.3s ease',
-              fontFamily: "'Montserrat', sans-serif"
-            }}
-            onFocus={(e) => e.target.style.borderColor = '#2c5aa0'}
-            onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
+            className={`auth-input${fieldErrors.confirmar ? " auth-input--error" : ""}`}
           />
 
           <button 

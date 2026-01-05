@@ -1,25 +1,36 @@
 import { useState } from "react";
 import { useAuth } from "../auth/AuthContext";
-import { usePedidos } from "../context/PedidosContext";
 import { useNavigate, Link } from "react-router-dom";
-import { supabase } from "../services/supabase";
 import home4 from "../assets/home4.png";
 
 export default function Login() {
   const { login } = useAuth();
-  const { pedidos } = usePedidos();
   const navigate = useNavigate();
 
   const [loginValue, setLoginValue] = useState("");
   const [senha, setSenha] = useState("");
+  const [error, setError] = useState("");
+  const [fieldErrors, setFieldErrors] = useState({ loginValue: false, senha: false });
 
   async function handleSubmit(e) {
     e.preventDefault();
 
+    setError("");
+    const nextFieldErrors = {
+      loginValue: !loginValue.trim(),
+      senha: !senha,
+    };
+    setFieldErrors(nextFieldErrors);
+    if (nextFieldErrors.loginValue || nextFieldErrors.senha) {
+      setError("Preencha email/telefone e senha");
+      return;
+    }
+
     const result = await login(loginValue, senha);
 
     if (!result.ok) {
-      alert("Dados inválidos");
+      setError(result.message || "Dados inválidos");
+      setFieldErrors({ loginValue: true, senha: true });
       return;
     }
 
@@ -101,40 +112,30 @@ export default function Login() {
           letterSpacing: '0.08em'
         }}>Login</h2>
 
+        {error && <p className="auth-error">{error}</p>}
+
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
           <input
             placeholder="Email ou telefone"
             value={loginValue}
-            onChange={e => setLoginValue(e.target.value)}
-            style={{
-              padding: '14px 18px',
-              fontSize: '1rem',
-              border: '2px solid #e0e0e0',
-              borderRadius: '6px',
-              outline: 'none',
-              transition: 'all 0.3s ease',
-              fontFamily: "'Montserrat', sans-serif"
+            onChange={(e) => {
+              setLoginValue(e.target.value);
+              if (fieldErrors.loginValue) setFieldErrors((prev) => ({ ...prev, loginValue: false }));
+              if (error) setError("");
             }}
-            onFocus={(e) => e.target.style.borderColor = '#2c5aa0'}
-            onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
+            className={`auth-input${fieldErrors.loginValue ? " auth-input--error" : ""}`}
           />
 
           <input
             type="password"
             placeholder="Senha"
             value={senha}
-            onChange={e => setSenha(e.target.value)}
-            style={{
-              padding: '14px 18px',
-              fontSize: '1rem',
-              border: '2px solid #e0e0e0',
-              borderRadius: '6px',
-              outline: 'none',
-              transition: 'all 0.3s ease',
-              fontFamily: "'Montserrat', sans-serif"
+            onChange={(e) => {
+              setSenha(e.target.value);
+              if (fieldErrors.senha) setFieldErrors((prev) => ({ ...prev, senha: false }));
+              if (error) setError("");
             }}
-            onFocus={(e) => e.target.style.borderColor = '#2c5aa0'}
-            onBlur={(e) => e.target.style.borderColor = '#e0e0e0'}
+            className={`auth-input${fieldErrors.senha ? " auth-input--error" : ""}`}
           />
 
           <button 
