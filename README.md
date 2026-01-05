@@ -6,7 +6,7 @@ Sistema completo de cafeteria (React + Supabase) com **3 perfis de usuário**: C
 
 A apresentação em slides está disponível no repositório e pode ser aberta diretamente no GitHub:
 
-- [docs/ApresentaçãoDoSistema.pdf](docs/ApresentaçãoDoSistema.pdf)
+- [docs/ApresentaçãoDoSistema.pdf](docs/apresentacao-do-sistema.pdf) 
 
 ## 🌐 Sistema em execução (GitHub Pages)
 
