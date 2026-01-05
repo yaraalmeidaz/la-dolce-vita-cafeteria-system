@@ -10,7 +10,6 @@ A apresentação em slides está disponível no repositório e pode ser aberta d
 
 ## 🌐 Sistema em execução (GitHub Pages)
 
-*(deploy via GitHub Pages em preparação)*
 
 ➡️ https://yaraalmeidaz.github.io/la-dolce-vita-cafeteria-system/
 
