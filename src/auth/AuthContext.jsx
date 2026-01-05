@@ -34,7 +34,7 @@ export function AuthProvider({ children }) {
 
       if (error || !data) {
         console.error('Erro no login:', error);
-        return { ok: false };
+        return { ok: false, message: 'Dados inválidos' };
       }
 
       // Salva tipo_acesso e role no contexto
@@ -47,7 +47,7 @@ export function AuthProvider({ children }) {
       };
     } catch (err) {
       console.error('Erro inesperado no login:', err);
-      return { ok: false };
+      return { ok: false, message: 'Dados inválidos' };
     }
   }
 
