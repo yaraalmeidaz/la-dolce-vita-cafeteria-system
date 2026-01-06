@@ -168,7 +168,9 @@ As credenciais abaixo são inseridas pelo SQL de seed em [setup_database.sql](se
 
 ### Clientes
 
-- Cadastre‑se normalmente na tela de registro.
+- Cadastre‑se normalmente na tela de registro ou teste com um email padrão
+
+- Email: cliente1@gmail.com | Senha: cliente1
 
 ## 🧰 Scripts úteis (db)
 
