@@ -316,6 +316,9 @@ function DashboardLucro() {
       }
 
       // Custos fixos baseline (mensal)
+      // Fallback idêntico ao DashboardGestor: Aluguel 9500 + Água 600 + Luz 1200 +
+      // Internet 200 + Limpeza e manutenção 1000 + Sistema/software 300 = R$ 12.800
+      const CUSTOS_FIXOS_FALLBACK = 12800;
       let custosFixosBase = 0;
       let custosFixosByMonth = {};
       {
@@ -325,8 +328,12 @@ function DashboardLucro() {
 
         if (cfAllError) {
           setRelatorioAviso((prev) => prev || 'Não foi possível carregar custos fixos do banco.');
+          custosFixosBase = CUSTOS_FIXOS_FALLBACK;
         } else {
           custosFixosBase = (cfAll || []).reduce((sum, c) => sum + num(c?.valor), 0);
+          // Se o banco não tiver registros, usa o fallback para garantir que o lucro
+          // líquido já comece descontando custos fixos + salários.
+          if (custosFixosBase === 0) custosFixosBase = CUSTOS_FIXOS_FALLBACK;
           // Se houver lançamentos com data, usa por mês; senão aplica baseline.
           const { data: cfRange, error: cfRangeError } = await supabase
             .from('custos_fixos')
