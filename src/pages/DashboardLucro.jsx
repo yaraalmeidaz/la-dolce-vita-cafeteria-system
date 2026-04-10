@@ -404,7 +404,10 @@ function DashboardLucro() {
       const serie = months.map((m) => {
         const faturamento = faturamentoByMonth[m.key] || 0;
         const custosProdutos = custosProdutosByMonth[m.key] || 0;
-        const custosFixos = (m.key in custosFixosByMonth) ? custosFixosByMonth[m.key] : custosFixosBase;
+        // Só usa valor por mês se for positivo; senão aplica baseline (garante fallback)
+        const custosFixos = (m.key in custosFixosByMonth && custosFixosByMonth[m.key] > 0)
+          ? custosFixosByMonth[m.key]
+          : custosFixosBase;
         const lucroBruto = faturamento - custosProdutos;
         const lucroLiquido = lucroBruto - salariosBase - (Number.isFinite(custosFixos) ? custosFixos : 0);
         return { key: m.key, label: m.label, value: lucroLiquido };
@@ -453,9 +456,11 @@ function DashboardLucro() {
 
       const salarios = salariosBase;
 
-      // Custos fixos do mês (usa por mês se existir; senão baseline)
+      // Custos fixos do mês (usa por mês se existir e for > 0; senão baseline)
       const kHoje = monthKey(hoje);
-      const custosFixosTotal = (kHoje in custosFixosByMonth) ? custosFixosByMonth[kHoje] : custosFixosBase;
+      const custosFixosTotal = (kHoje in custosFixosByMonth && custosFixosByMonth[kHoje] > 0)
+        ? custosFixosByMonth[kHoje]
+        : custosFixosBase;
 
       const lucroBruto = faturamento - custosProdutos;
       const lucroLiquido = lucroBruto - salarios - custosFixosTotal;
