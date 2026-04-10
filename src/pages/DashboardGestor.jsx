@@ -377,21 +377,21 @@ function DashboardGestor() {
 
       if (error) {
         setCustosFixos(custosFixosFallback);
-        setCustosPodeEditar(false);
+        setCustosPodeEditar(true);
         setMsg('Não foi possível carregar custos fixos do banco.');
         return;
       }
 
       if (Array.isArray(data) && data.length > 0) {
         setCustosFixos(data.map((c) => ({ id: c.id, nome: c.descricao, valor: Number(c.valor) || 0 })));
-        setCustosPodeEditar(true);
       } else {
+        // Banco vazio: usa fallback sem id. A edição ainda é permitida e fará insert na 1ª vez.
         setCustosFixos(custosFixosFallback);
-        setCustosPodeEditar(false);
       }
+      setCustosPodeEditar(true);
     } catch {
       setCustosFixos(custosFixosFallback);
-      setCustosPodeEditar(false);
+      setCustosPodeEditar(true);
       setMsg('Não foi possível carregar custos fixos do banco.');
     }
   }
@@ -425,26 +425,37 @@ function DashboardGestor() {
     setMsg(null);
 
     try {
-      const updates = custosDraft
-        .filter((c) => c.id)
-        .map((c) => ({ id: c.id, valor: parseMoneyBR(c.valorInput) }));
+      const comId    = custosDraft.filter((c) => c.id);
+      const semId    = custosDraft.filter((c) => !c.id);
 
+      // UPDATE dos que já existem no banco
       const byId = new Map(custosFixos.filter((c) => c.id).map((c) => [c.id, Number(c.valor) || 0]));
-      const changed = updates.filter((u) => byId.has(u.id) && byId.get(u.id) !== u.valor);
+      const changed = comId
+        .map((c) => ({ id: c.id, valor: parseMoneyBR(c.valorInput) }))
+        .filter((u) => byId.has(u.id) && byId.get(u.id) !== u.valor);
 
       if (changed.length > 0) {
         const results = await Promise.all(
           changed.map((u) =>
-            supabase
-              .from('custos_fixos')
-              .update({ valor: u.valor })
-              .eq('id', u.id)
+            supabase.from('custos_fixos').update({ valor: u.valor }).eq('id', u.id)
           )
         );
-
-        const anyError = results.some((r) => r.error);
-        if (anyError) {
+        if (results.some((r) => r.error)) {
           setMsg('Não foi possível salvar todos os custos fixos.');
+          setSavingCustos(false);
+          return;
+        }
+      }
+
+      // INSERT dos que vieram do fallback (sem id no banco)
+      if (semId.length > 0) {
+        const rows = semId.map((c) => ({
+          descricao: c.nome,
+          valor: parseMoneyBR(c.valorInput),
+        }));
+        const { error: insertError } = await supabase.from('custos_fixos').insert(rows);
+        if (insertError) {
+          setMsg('Não foi possível criar os custos fixos no banco: ' + insertError.message);
           setSavingCustos(false);
           return;
         }
