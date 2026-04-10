@@ -46,6 +46,17 @@ function DashboardGestor() {
   const [abaProduto, setAbaProduto] = useState('');
   const [loadingProdutos, setLoadingProdutos] = useState(false);
 
+  // Aba Promoção
+  const [cupons, setCupons] = useState(() => {
+    try { return JSON.parse(localStorage.getItem('promo_cupons') || '[]'); } catch { return []; }
+  });
+  const [novoCupomCodigo, setNovoCupomCodigo] = useState('');
+  const [novoCupomPct, setNovoCupomPct] = useState('');
+  const [aniversariantes, setAniversariantes] = useState([]);
+  const [topConsumidores, setTopConsumidores] = useState([]);
+  const [loadingPromo, setLoadingPromo] = useState(false);
+  const [mensagemEnviada, setMensagemEnviada] = useState({});
+
   const totalFixosSemSalarios = (custosFixos || []).reduce((acc, c) => acc + (Number(c.valor) || 0), 0);
 
   useEffect(() => {
@@ -309,6 +320,14 @@ function DashboardGestor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, aba]);
 
+  // Carrega dados da aba Promoção
+  useEffect(() => {
+    if (user?.tipo_acesso !== 'gestor') return;
+    if (aba !== 'promocao') return;
+    carregarDadosPromocao();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, aba]);
+
   async function carregarPedidos() {
     const requestId = ++pedidosRequestIdRef.current;
     setLoadingVendas(true);
@@ -490,6 +509,83 @@ function DashboardGestor() {
     }
   }
 
+  async function carregarDadosPromocao() {
+    setLoadingPromo(true);
+    try {
+      const hoje = new Date();
+      const mesHoje = hoje.getMonth() + 1;
+      const diaHoje = hoje.getDate();
+
+      // Clientes com aniversário de cadastro (mesmo dia/mês)
+      const { data: usuarios } = await supabase
+        .from('users')
+        .select('id, nome, email, created_at')
+        .eq('tipo_acesso', 'cliente');
+
+      const aniv = (usuarios || []).filter((u) => {
+        const d = u.created_at ? new Date(u.created_at) : null;
+        if (!d) return false;
+        return d.getMonth() + 1 === mesHoje && d.getDate() === diaHoje;
+      });
+      setAniversariantes(aniv);
+
+      // Top 5 consumidores (por total gasto)
+      const { data: pedidosAll } = await supabase
+        .from('orders')
+        .select('user_id, total');
+
+      const gastoMap = new Map();
+      (pedidosAll || []).forEach((p) => {
+        const uid = p.user_id;
+        if (!uid) return;
+        gastoMap.set(uid, (gastoMap.get(uid) || 0) + Number(p.total || 0));
+      });
+
+      const userMap = new Map((usuarios || []).map((u) => [u.id, u]));
+      const top = Array.from(gastoMap.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 5)
+        .map(([uid, total]) => ({ ...userMap.get(uid), total }));
+
+      setTopConsumidores(top);
+    } catch {
+      // silencia erro
+    } finally {
+      setLoadingPromo(false);
+    }
+  }
+
+  function adicionarCupom() {
+    const codigo = novoCupomCodigo.trim().toUpperCase();
+    const pct = Number(novoCupomPct);
+    if (!codigo || !pct || pct <= 0 || pct > 100) return;
+    const novo = { id: Date.now(), codigo, pct, ativo: true, criadoEm: new Date().toISOString() };
+    const lista = [novo, ...cupons];
+    setCupons(lista);
+    localStorage.setItem('promo_cupons', JSON.stringify(lista));
+    setNovoCupomCodigo('');
+    setNovoCupomPct('');
+  }
+
+  function toggleCupom(id) {
+    const lista = cupons.map((c) => c.id === id ? { ...c, ativo: !c.ativo } : c);
+    setCupons(lista);
+    localStorage.setItem('promo_cupons', JSON.stringify(lista));
+  }
+
+  function removerCupom(id) {
+    const lista = cupons.filter((c) => c.id !== id);
+    setCupons(lista);
+    localStorage.setItem('promo_cupons', JSON.stringify(lista));
+  }
+
+  function simularEnvioMensagem(clienteId) {
+    setMensagemEnviada((prev) => ({ ...prev, [clienteId]: true }));
+    setTimeout(() => {
+      setMensagemEnviada((prev) => ({ ...prev, [clienteId]: false }));
+    }, 2000);
+  }
+
   async function carregarProdutos() {
     setLoadingProdutos(true);
     try {
@@ -568,6 +664,7 @@ function DashboardGestor() {
           { key: 'custos', label: 'Custos fixos' },
           { key: 'vendas', label: 'Relatório de vendas' },
           { key: 'produtos', label: 'Produtos' },
+          { key: 'promocao', label: 'Promoção' },
         ].map((t) => {
           const active = aba === t.key;
           return (
@@ -966,6 +1063,149 @@ function DashboardGestor() {
               </>
             );
           })()}
+        </section>
+      )}
+
+      {aba === 'promocao' && (
+        <section className="dash-card" aria-label="Promoções e cupons">
+          <div className="card-head">
+            <div>
+              <div className="card-title">Promoções</div>
+              <div className="card-sub">Gerencie cupons de desconto e envie ofertas segmentadas para clientes</div>
+            </div>
+          </div>
+
+          {/* ── Cupons de desconto ── */}
+          <div className="promo-section">
+            <div className="promo-section__title">Cupons de desconto</div>
+
+            <div className="promo-cupom-form">
+              <input
+                className="promo-input"
+                type="text"
+                placeholder="Código (ex: VERAO10)"
+                value={novoCupomCodigo}
+                onChange={(e) => setNovoCupomCodigo(e.target.value.toUpperCase())}
+                maxLength={20}
+              />
+              <div className="promo-input-wrap">
+                <input
+                  className="promo-input promo-input--pct"
+                  type="number"
+                  placeholder="% desconto"
+                  value={novoCupomPct}
+                  onChange={(e) => setNovoCupomPct(e.target.value)}
+                  min="1"
+                  max="100"
+                />
+                <span className="promo-pct-label">%</span>
+              </div>
+              <button
+                type="button"
+                className="action-btn action-btn--primary"
+                onClick={adicionarCupom}
+                disabled={!novoCupomCodigo.trim() || !novoCupomPct || Number(novoCupomPct) <= 0 || Number(novoCupomPct) > 100}
+              >
+                Adicionar cupom
+              </button>
+            </div>
+
+            {cupons.length === 0 ? (
+              <div className="empty">Nenhum cupom cadastrado ainda.</div>
+            ) : (
+              <div className="promo-cupom-list">
+                {cupons.map((c) => (
+                  <div key={c.id} className={`promo-cupom-item ${!c.ativo ? 'is-inactive' : ''}`}>
+                    <div className="promo-cupom-code">{c.codigo}</div>
+                    <div className="promo-cupom-pct">{c.pct}% OFF</div>
+                    <div className="promo-cupom-status">{c.ativo ? 'Ativo' : 'Inativo'}</div>
+                    <div className="promo-cupom-actions">
+                      <button type="button" className="action-btn" onClick={() => toggleCupom(c.id)}>
+                        {c.ativo ? 'Desativar' : 'Ativar'}
+                      </button>
+                      <button type="button" className="action-btn promo-cupom-del" onClick={() => removerCupom(c.id)}>
+                        Remover
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* ── Aniversariantes de cadastro ── */}
+          <div className="promo-section">
+            <div className="promo-section__title">🎂 Aniversariantes de cadastro hoje</div>
+            <div className="promo-section__sub">Clientes cujo cadastro completa aniversário hoje — envie uma mensagem especial</div>
+
+            {loadingPromo ? (
+              <div className="loading">Carregando...</div>
+            ) : aniversariantes.length === 0 ? (
+              <div className="empty">Nenhum cliente com aniversário de cadastro hoje.</div>
+            ) : (
+              <div className="promo-cliente-list">
+                {aniversariantes.map((c) => {
+                  const anos = c.created_at
+                    ? new Date().getFullYear() - new Date(c.created_at).getFullYear()
+                    : null;
+                  return (
+                    <div key={c.id} className="promo-cliente-item">
+                      <div className="promo-cliente-info">
+                        <div className="promo-cliente-nome">{c.nome || 'Cliente'}</div>
+                        <div className="promo-cliente-meta">
+                          {c.email && <span>{c.email}</span>}
+                          {anos !== null && <span>• {anos} {anos === 1 ? 'ano' : 'anos'} de cadastro</span>}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className={`action-btn ${mensagemEnviada[c.id] ? 'action-btn--sent' : 'action-btn--primary'}`}
+                        onClick={() => simularEnvioMensagem(c.id)}
+                        disabled={mensagemEnviada[c.id]}
+                      >
+                        {mensagemEnviada[c.id] ? '✓ Enviado' : 'Enviar promoção'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* ── Top consumidores ── */}
+          <div className="promo-section">
+            <div className="promo-section__title">⭐ Clientes que mais consomem</div>
+            <div className="promo-section__sub">Top 5 clientes por valor total gasto — ofereça um benefício exclusivo</div>
+
+            {loadingPromo ? (
+              <div className="loading">Carregando...</div>
+            ) : topConsumidores.length === 0 ? (
+              <div className="empty">Nenhum dado de consumo encontrado.</div>
+            ) : (
+              <div className="promo-cliente-list">
+                {topConsumidores.map((c, idx) => (
+                  <div key={c.id || idx} className="promo-cliente-item">
+                    <div className="promo-rank">#{idx + 1}</div>
+                    <div className="promo-cliente-info">
+                      <div className="promo-cliente-nome">{c.nome || 'Cliente'}</div>
+                      <div className="promo-cliente-meta">
+                        {c.email && <span>{c.email}</span>}
+                        <span>• Total gasto: <strong>R$ {formatMoney(c.total)}</strong></span>
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className={`action-btn ${mensagemEnviada[c.id] ? 'action-btn--sent' : 'action-btn--primary'}`}
+                      onClick={() => simularEnvioMensagem(c.id)}
+                      disabled={mensagemEnviada[c.id]}
+                    >
+                      {mensagemEnviada[c.id] ? '✓ Enviado' : 'Enviar cupom'}
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
         </section>
       )}
 
@@ -1807,6 +2047,196 @@ function DashboardGestor() {
           white-space: nowrap;
           padding: 6px 2px 0;
           line-height: 1.3;
+        }
+
+        /* ── Promoção ── */
+        .promo-section {
+          border: 1px solid rgba(0,0,0,0.10);
+          border-radius: 14px;
+          padding: 16px;
+          margin-bottom: 14px;
+          background: rgba(0,0,0,0.01);
+        }
+
+        .promo-section__title {
+          font-size: 14px;
+          font-weight: 800;
+          color: rgba(0,0,0,0.86);
+          margin-bottom: 4px;
+        }
+
+        .promo-section__sub {
+          font-size: 12px;
+          font-weight: 600;
+          color: rgba(0,0,0,0.52);
+          margin-bottom: 12px;
+        }
+
+        .promo-cupom-form {
+          display: flex;
+          gap: 10px;
+          flex-wrap: wrap;
+          align-items: center;
+          margin-bottom: 14px;
+        }
+
+        .promo-input {
+          height: 40px;
+          border-radius: 12px;
+          border: 1px solid rgba(0,0,0,0.18);
+          padding: 0 12px;
+          font-size: 13px;
+          font-weight: 700;
+          outline: none;
+          background: #fff;
+          color: #000;
+          flex: 1 1 160px;
+          min-width: 120px;
+        }
+
+        .promo-input:focus { border-color: rgba(0,0,0,0.32); }
+
+        .promo-input--pct { max-width: 110px; flex: 0 0 90px; padding-right: 28px; }
+
+        .promo-input-wrap {
+          position: relative;
+          flex: 0 0 90px;
+        }
+
+        .promo-pct-label {
+          position: absolute;
+          right: 12px;
+          top: 50%;
+          transform: translateY(-50%);
+          font-size: 13px;
+          font-weight: 700;
+          color: rgba(0,0,0,0.50);
+          pointer-events: none;
+        }
+
+        .promo-cupom-list {
+          display: grid;
+          gap: 10px;
+        }
+
+        .promo-cupom-item {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          border: 1px solid rgba(0,0,0,0.12);
+          border-radius: 12px;
+          padding: 12px 14px;
+          background: #fff;
+          flex-wrap: wrap;
+        }
+
+        .promo-cupom-item.is-inactive {
+          opacity: 0.55;
+        }
+
+        .promo-cupom-code {
+          font-size: 14px;
+          font-weight: 800;
+          letter-spacing: 0.5px;
+          color: #000;
+          flex: 1 1 120px;
+          font-family: monospace;
+        }
+
+        .promo-cupom-pct {
+          font-size: 13px;
+          font-weight: 800;
+          color: rgba(0,0,0,0.72);
+          background: rgba(0,0,0,0.06);
+          border-radius: 8px;
+          padding: 4px 10px;
+          white-space: nowrap;
+        }
+
+        .promo-cupom-status {
+          font-size: 12px;
+          font-weight: 700;
+          color: rgba(0,0,0,0.52);
+          min-width: 50px;
+        }
+
+        .promo-cupom-actions {
+          display: flex;
+          gap: 8px;
+          margin-left: auto;
+          flex-wrap: wrap;
+        }
+
+        .promo-cupom-del {
+          color: rgba(180,0,0,0.75);
+          border-color: rgba(180,0,0,0.20);
+        }
+
+        .promo-cupom-del:hover {
+          border-color: rgba(180,0,0,0.40);
+        }
+
+        .promo-cliente-list {
+          display: grid;
+          gap: 10px;
+        }
+
+        .promo-cliente-item {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          border: 1px solid rgba(0,0,0,0.10);
+          border-radius: 12px;
+          padding: 12px 14px;
+          background: #fff;
+          flex-wrap: wrap;
+        }
+
+        .promo-rank {
+          font-size: 16px;
+          font-weight: 800;
+          color: rgba(0,0,0,0.38);
+          min-width: 28px;
+          text-align: center;
+        }
+
+        .promo-cliente-info {
+          flex: 1 1 180px;
+          min-width: 0;
+        }
+
+        .promo-cliente-nome {
+          font-size: 14px;
+          font-weight: 800;
+          color: rgba(0,0,0,0.86);
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+        }
+
+        .promo-cliente-meta {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+          font-size: 12px;
+          font-weight: 600;
+          color: rgba(0,0,0,0.55);
+          margin-top: 2px;
+        }
+
+        .action-btn--sent {
+          background: rgba(0,140,0,0.10);
+          border-color: rgba(0,140,0,0.30);
+          color: rgba(0,120,0,0.90);
+        }
+
+        @media (max-width: 520px) {
+          .promo-cupom-form { flex-direction: column; align-items: stretch; }
+          .promo-input--pct { max-width: none; }
+          .promo-input-wrap { flex: 1 1 auto; }
+          .promo-cupom-item { flex-direction: column; align-items: flex-start; }
+          .promo-cupom-actions { margin-left: 0; }
+          .promo-cliente-item { flex-direction: column; align-items: flex-start; }
         }
       `}</style>
     </div>
