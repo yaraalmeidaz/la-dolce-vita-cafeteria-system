@@ -159,3 +159,12 @@ INSERT INTO custos_fixos (descricao, valor) VALUES
 
 -- Adicionar coluna cargo se não existir
 ALTER TABLE users ADD COLUMN IF NOT EXISTS cargo VARCHAR(255);
+
+-- Tabela de cupons de desconto
+CREATE TABLE IF NOT EXISTS cupons_promocao (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  codigo VARCHAR(50) NOT NULL UNIQUE,
+  desconto_pct INTEGER NOT NULL CHECK (desconto_pct > 0 AND desconto_pct <= 100),
+  ativo BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);

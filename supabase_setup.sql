@@ -182,3 +182,11 @@ ON CONFLICT (order_item_id) DO UPDATE SET
 -- Clientes podem ver seus pedidos
 -- CREATE POLICY "Users can view own orders" ON orders FOR SELECT USING (user_id = auth.uid());
 -- CREATE POLICY "Users can view own order items" ON order_items FOR SELECT USING (order_id IN (SELECT id FROM orders WHERE user_id = auth.uid()));
+-- Tabela de cupons de desconto
+CREATE TABLE IF NOT EXISTS cupons_promocao (
+  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
+  codigo VARCHAR(50) NOT NULL UNIQUE,
+  desconto_pct INTEGER NOT NULL CHECK (desconto_pct > 0 AND desconto_pct <= 100),
+  ativo BOOLEAN DEFAULT true,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);

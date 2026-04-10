@@ -47,11 +47,10 @@ function DashboardGestor() {
   const [loadingProdutos, setLoadingProdutos] = useState(false);
 
   // Aba Promoção
-  const [cupons, setCupons] = useState(() => {
-    try { return JSON.parse(localStorage.getItem('promo_cupons') || '[]'); } catch { return []; }
-  });
+  const [cupons, setCupons] = useState([]);
   const [novoCupomCodigo, setNovoCupomCodigo] = useState('');
   const [novoCupomPct, setNovoCupomPct] = useState('');
+  const [savingCupom, setSavingCupom] = useState(false);
   const [aniversariantes, setAniversariantes] = useState([]);
   const [topConsumidores, setTopConsumidores] = useState([]);
   const [loadingPromo, setLoadingPromo] = useState(false);
@@ -516,6 +515,13 @@ function DashboardGestor() {
       const mesHoje = hoje.getMonth() + 1;
       const diaHoje = hoje.getDate();
 
+      // Cupons do banco
+      const { data: cuponsBanco } = await supabase
+        .from('cupons_promocao')
+        .select('*')
+        .order('created_at', { ascending: false });
+      setCupons(cuponsBanco || []);
+
       // Clientes com aniversário de cadastro (mesmo dia/mês)
       const { data: usuarios } = await supabase
         .from('users')
@@ -555,28 +561,40 @@ function DashboardGestor() {
     }
   }
 
-  function adicionarCupom() {
+  async function adicionarCupom() {
     const codigo = novoCupomCodigo.trim().toUpperCase();
     const pct = Number(novoCupomPct);
     if (!codigo || !pct || pct <= 0 || pct > 100) return;
-    const novo = { id: Date.now(), codigo, pct, ativo: true, criadoEm: new Date().toISOString() };
-    const lista = [novo, ...cupons];
-    setCupons(lista);
-    localStorage.setItem('promo_cupons', JSON.stringify(lista));
-    setNovoCupomCodigo('');
-    setNovoCupomPct('');
+    setSavingCupom(true);
+    try {
+      const { data, error } = await supabase
+        .from('cupons_promocao')
+        .insert({ codigo, desconto_pct: pct, ativo: true })
+        .select()
+        .single();
+      if (!error && data) {
+        setCupons((prev) => [data, ...prev]);
+        setNovoCupomCodigo('');
+        setNovoCupomPct('');
+      }
+    } catch { /* silencia */ } finally {
+      setSavingCupom(false);
+    }
   }
 
-  function toggleCupom(id) {
-    const lista = cupons.map((c) => c.id === id ? { ...c, ativo: !c.ativo } : c);
-    setCupons(lista);
-    localStorage.setItem('promo_cupons', JSON.stringify(lista));
+  async function toggleCupom(id, ativoAtual) {
+    const { data } = await supabase
+      .from('cupons_promocao')
+      .update({ ativo: !ativoAtual })
+      .eq('id', id)
+      .select()
+      .single();
+    if (data) setCupons((prev) => prev.map((c) => c.id === id ? data : c));
   }
 
-  function removerCupom(id) {
-    const lista = cupons.filter((c) => c.id !== id);
-    setCupons(lista);
-    localStorage.setItem('promo_cupons', JSON.stringify(lista));
+  async function removerCupom(id) {
+    const { error } = await supabase.from('cupons_promocao').delete().eq('id', id);
+    if (!error) setCupons((prev) => prev.filter((c) => c.id !== id));
   }
 
   function simularEnvioMensagem(clienteId) {
@@ -1104,9 +1122,9 @@ function DashboardGestor() {
                 type="button"
                 className="action-btn action-btn--primary"
                 onClick={adicionarCupom}
-                disabled={!novoCupomCodigo.trim() || !novoCupomPct || Number(novoCupomPct) <= 0 || Number(novoCupomPct) > 100}
+                disabled={savingCupom || !novoCupomCodigo.trim() || !novoCupomPct || Number(novoCupomPct) <= 0 || Number(novoCupomPct) > 100}
               >
-                Adicionar cupom
+                {savingCupom ? 'Salvando...' : 'Adicionar cupom'}
               </button>
             </div>
 
@@ -1117,10 +1135,10 @@ function DashboardGestor() {
                 {cupons.map((c) => (
                   <div key={c.id} className={`promo-cupom-item ${!c.ativo ? 'is-inactive' : ''}`}>
                     <div className="promo-cupom-code">{c.codigo}</div>
-                    <div className="promo-cupom-pct">{c.pct}% OFF</div>
+                    <div className="promo-cupom-pct">{c.desconto_pct}% OFF</div>
                     <div className="promo-cupom-status">{c.ativo ? 'Ativo' : 'Inativo'}</div>
                     <div className="promo-cupom-actions">
-                      <button type="button" className="action-btn" onClick={() => toggleCupom(c.id)}>
+                      <button type="button" className="action-btn" onClick={() => toggleCupom(c.id, c.ativo)}>
                         {c.ativo ? 'Desativar' : 'Ativar'}
                       </button>
                       <button type="button" className="action-btn promo-cupom-del" onClick={() => removerCupom(c.id)}>
