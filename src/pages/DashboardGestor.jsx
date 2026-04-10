@@ -42,6 +42,10 @@ function DashboardGestor() {
   const [loadingTopCategorias, setLoadingTopCategorias] = useState(false);
   const [topCategoriasAviso, setTopCategoriasAviso] = useState(null);
 
+  const [produtosData, setProdutosData] = useState([]);
+  const [abaProduto, setAbaProduto] = useState('');
+  const [loadingProdutos, setLoadingProdutos] = useState(false);
+
   const totalFixosSemSalarios = (custosFixos || []).reduce((acc, c) => acc + (Number(c.valor) || 0), 0);
 
   useEffect(() => {
@@ -297,6 +301,14 @@ function DashboardGestor() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, aba, loadingVendas, pedidos, dataInicio, dataFim, canalVendas, buscaVendasCliente, clientes]);
 
+  // Carrega vendas por produto (all-time) ao entrar na aba Produtos
+  useEffect(() => {
+    if (user?.tipo_acesso !== 'gestor') return;
+    if (aba !== 'produtos') return;
+    carregarProdutos();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, aba]);
+
   async function carregarPedidos() {
     const requestId = ++pedidosRequestIdRef.current;
     setLoadingVendas(true);
@@ -467,6 +479,55 @@ function DashboardGestor() {
     }
   }
 
+  async function carregarProdutos() {
+    setLoadingProdutos(true);
+    try {
+      const PAGE_SIZE = 1000;
+      let from = 0;
+      const all = [];
+
+      while (true) {
+        const { data, error } = await supabase
+          .from('vendas_itens')
+          .select('categoria, produto_nome, qty')
+          .order('categoria')
+          .range(from, from + PAGE_SIZE - 1);
+
+        if (error) throw error;
+        if (data && data.length) all.push(...data);
+        if (!data || data.length < PAGE_SIZE) break;
+        from += PAGE_SIZE;
+      }
+
+      const map = new Map();
+      all.forEach((row) => {
+        const cat = String(row?.categoria || 'Sem categoria');
+        const nome = String(row?.produto_nome || 'Item');
+        const qty = Number(row?.qty || 0);
+        if (!qty) return;
+        const key = `${cat}__${nome}`;
+        const prev = map.get(key) || { categoria: cat, produto_nome: nome, qty: 0 };
+        prev.qty += qty;
+        map.set(key, prev);
+      });
+
+      const result = Array.from(map.values()).sort((a, b) => {
+        const catCmp = a.categoria.localeCompare(b.categoria, 'pt-BR');
+        if (catCmp !== 0) return catCmp;
+        return b.qty - a.qty;
+      });
+
+      setProdutosData(result);
+      if (result.length > 0) {
+        setAbaProduto((prev) => prev || result[0].categoria);
+      }
+    } catch {
+      setProdutosData([]);
+    } finally {
+      setLoadingProdutos(false);
+    }
+  }
+
   function filtrarClientes(lista) {
     const q = buscaCliente.trim().toLowerCase();
     return (lista || [])
@@ -495,6 +556,7 @@ function DashboardGestor() {
           { key: 'clientes', label: 'Clientes cadastrados' },
           { key: 'custos', label: 'Custos fixos' },
           { key: 'vendas', label: 'Relatório de vendas' },
+          { key: 'produtos', label: 'Produtos' },
         ].map((t) => {
           const active = aba === t.key;
           return (
@@ -826,6 +888,73 @@ function DashboardGestor() {
               })()}
             </div>
           )}
+        </section>
+      )}
+
+      {aba === 'produtos' && (
+        <section className="dash-card" aria-label="Análise de produtos">
+          <div className="card-head">
+            <div>
+              <div className="card-title">Análise de produtos</div>
+              <div className="card-sub">Quantidade total de vendas por produto — clique em uma categoria para visualizar</div>
+            </div>
+          </div>
+
+          {loadingProdutos ? (
+            <div className="loading">Carregando dados de produtos...</div>
+          ) : produtosData.length === 0 ? (
+            <div className="empty">Nenhum dado de vendas por produto encontrado. Verifique se a tabela "vendas_itens" existe no banco.</div>
+          ) : (() => {
+            const categorias = [...new Set(produtosData.map((d) => d.categoria))].sort((a, b) =>
+              a.localeCompare(b, 'pt-BR')
+            );
+            const produtosCat = produtosData.filter((d) => d.categoria === abaProduto);
+            const maxQty = Math.max(...produtosCat.map((d) => d.qty), 1);
+
+            return (
+              <>
+                <div className="prod-cats" role="tablist" aria-label="Categorias de produtos">
+                  {categorias.map((cat) => (
+                    <button
+                      key={cat}
+                      type="button"
+                      role="tab"
+                      aria-selected={abaProduto === cat}
+                      className={`prod-cat-btn ${abaProduto === cat ? 'is-active' : ''}`}
+                      onClick={() => setAbaProduto(cat)}
+                    >
+                      {cat}
+                    </button>
+                  ))}
+                </div>
+
+                {produtosCat.length === 0 ? (
+                  <div className="empty">Sem vendas registradas nesta categoria.</div>
+                ) : (
+                  <div className="prod-chart-wrap">
+                    <div className="prod-chart" role="list" aria-label={`Vendas da categoria ${abaProduto}`}>
+                      {produtosCat.map((p) => {
+                        const pct = (p.qty / maxQty) * 100;
+                        return (
+                          <div key={p.produto_nome} className="prod-bar-col" role="listitem">
+                            <span className="prod-bar-qty">{p.qty}</span>
+                            <div className="prod-bar-area">
+                              <div
+                                className="prod-bar"
+                                style={{ height: `${pct}%` }}
+                                aria-label={`${p.produto_nome}: ${p.qty} vendas`}
+                              />
+                            </div>
+                            <div className="prod-bar-name" title={p.produto_nome}>{p.produto_nome}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          })()}
         </section>
       )}
 
@@ -1565,6 +1694,108 @@ function DashboardGestor() {
           .money-input {
             width: 140px;
           }
+        }
+
+        /* ── Aba Produtos ── */
+        .prod-cats {
+          display: flex;
+          gap: 8px;
+          flex-wrap: wrap;
+          margin-bottom: 16px;
+        }
+
+        .prod-cat-btn {
+          border: 1px solid rgba(0,0,0,0.14);
+          background: #fff;
+          border-radius: 20px;
+          padding: 7px 14px;
+          font-size: 12px;
+          font-weight: 700;
+          color: rgba(0,0,0,0.60);
+          cursor: pointer;
+          white-space: nowrap;
+          transition: background 0.15s, color 0.15s, border-color 0.15s;
+        }
+
+        .prod-cat-btn:hover:not(.is-active) {
+          border-color: rgba(0,0,0,0.28);
+          color: rgba(0,0,0,0.84);
+        }
+
+        .prod-cat-btn.is-active {
+          background: #000;
+          border-color: #000;
+          color: #fff;
+        }
+
+        .prod-chart-wrap {
+          overflow-x: auto;
+          -webkit-overflow-scrolling: touch;
+          padding-bottom: 4px;
+          border: 1px solid rgba(0,0,0,0.08);
+          border-radius: 14px;
+          background: rgba(0,0,0,0.01);
+        }
+
+        .prod-chart {
+          display: flex;
+          align-items: stretch;
+          gap: 10px;
+          min-width: max-content;
+          height: 280px;
+          padding: 20px 16px 0 16px;
+        }
+
+        .prod-bar-col {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          width: 72px;
+          flex: 0 0 72px;
+        }
+
+        .prod-bar-qty {
+          font-size: 12px;
+          font-weight: 800;
+          color: rgba(0,0,0,0.82);
+          height: 18px;
+          line-height: 18px;
+          text-align: center;
+          flex: 0 0 18px;
+        }
+
+        .prod-bar-area {
+          flex: 1;
+          width: 42px;
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-end;
+          background: rgba(0,0,0,0.05);
+          border-radius: 6px 6px 0 0;
+          margin-top: 4px;
+          overflow: hidden;
+        }
+
+        .prod-bar {
+          width: 100%;
+          background: #000;
+          border-radius: 6px 6px 0 0;
+          min-height: 4px;
+          transition: height 0.35s ease;
+        }
+
+        .prod-bar-name {
+          flex: 0 0 40px;
+          width: 72px;
+          font-size: 10px;
+          font-weight: 700;
+          color: rgba(0,0,0,0.58);
+          text-align: center;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          white-space: nowrap;
+          padding: 6px 2px 0;
+          line-height: 1.3;
         }
       `}</style>
     </div>
