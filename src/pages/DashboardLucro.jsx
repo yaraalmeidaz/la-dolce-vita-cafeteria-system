@@ -73,16 +73,17 @@ function LucroChart({ series }) {
   const max = values.length ? Math.max(...values) : 0;
 
   const width = 920;
-  const height = 220;
   const padX = 18;
-  const padY = 18;
+  const padTop = 18;
+  const padBottom = 32; // espaço para rótulos do eixo X
+  const height = 240;
   const innerW = width - padX * 2;
-  const innerH = height - padY * 2;
+  const innerH = height - padTop - padBottom;
 
   const range = max - min || 1;
   const yFor = (v) => {
     const t = (v - min) / range;
-    return padY + (1 - t) * innerH;
+    return padTop + (1 - t) * innerH;
   };
 
   const xForIndex = (i) => {
@@ -99,14 +100,27 @@ function LucroChart({ series }) {
     .map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x.toFixed(2)} ${p.y.toFixed(2)}`)
     .join(' ');
 
+  // Área preenchida abaixo da linha (até a linha zero ou base)
+  const baseY = yFor(Math.max(0, min));
+  const areaPath = points.length > 0
+    ? `${dPath} L ${points[points.length - 1].x.toFixed(2)} ${baseY.toFixed(2)} L ${points[0].x.toFixed(2)} ${baseY.toFixed(2)} Z`
+    : '';
+
   const showZero = min < 0 && max > 0;
   const yZero = yFor(0);
 
   const ticks = 4;
   const grid = Array.from({ length: ticks + 1 }, (_, i) => {
-    const y = padY + (i / ticks) * innerH;
-    return y;
+    const y = padTop + (i / ticks) * innerH;
+    const v = max - (i / ticks) * (max - min);
+    return { y, v };
   });
+
+  // Mostrar apenas alguns rótulos para não sobrepor (mostra todos se ≤ 13)
+  const showLabel = (i) => {
+    if (data.length <= 13) return true;
+    return i % 2 === 0 || i === data.length - 1;
+  };
 
   return (
     <div className="chart">
@@ -119,10 +133,17 @@ function LucroChart({ series }) {
         <div className="chart__empty">Sem dados para exibir.</div>
       ) : (
         <div className="chart__wrap" aria-label="Gráfico de lucro líquido">
-          <svg viewBox={`0 0 ${width} ${height}`} width="100%" height="220" role="img">
+          <svg viewBox={`0 0 ${width} ${height}`} width="100%" height={height} role="img">
+            <defs>
+              <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="#000" stopOpacity="0.08" />
+                <stop offset="100%" stopColor="#000" stopOpacity="0.01" />
+              </linearGradient>
+            </defs>
+
             <rect x="0" y="0" width={width} height={height} fill="#fff" rx="12" />
 
-            {grid.map((y, idx) => (
+            {grid.map(({ y }, idx) => (
               <line
                 key={idx}
                 x1={padX}
@@ -134,28 +155,56 @@ function LucroChart({ series }) {
               />
             ))}
 
+            {/* Valores do eixo Y */}
+            {grid.map(({ y, v }, idx) => (
+              <text key={`yt-${idx}`} x={padX + 2} y={y - 3} fontSize="9" fill="rgba(0,0,0,0.4)" textAnchor="start">
+                {v >= 1000 ? `${(v / 1000).toFixed(0)}k` : v.toFixed(0)}
+              </text>
+            ))}
+
             {showZero && (
               <line
                 x1={padX}
                 y1={yZero}
                 x2={width - padX}
                 y2={yZero}
-                stroke="rgba(0,0,0,0.22)"
+                stroke="rgba(0,0,0,0.28)"
                 strokeWidth="1"
+                strokeDasharray="4 3"
               />
             )}
 
-            <path d={dPath} fill="none" stroke="#000" strokeWidth="2" />
+            {/* Área preenchida */}
+            {areaPath && <path d={areaPath} fill="url(#areaGrad)" />}
 
+            {/* Linha */}
+            <path d={dPath} fill="none" stroke="#000" strokeWidth="2" strokeLinejoin="round" />
+
+            {/* Pontos */}
             {points.map((p, idx) => (
-              <circle key={idx} cx={p.x} cy={p.y} r="3.2" fill="#000" />
+              <g key={idx}>
+                <circle cx={p.x} cy={p.y} r="3.5" fill="#fff" stroke="#000" strokeWidth="2" />
+                {/* Tooltip inline ao passar mouse — título SVG */}
+                <title>{`${p.label}: R$ ${p.v.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}`}</title>
+              </g>
             ))}
-          </svg>
 
-          <div className="chart__x">
-            <span>dez/2025</span>
-            <span>dez/2026</span>
-          </div>
+            {/* Rótulos do eixo X (dentro do SVG) */}
+            {points.map((p, idx) =>
+              showLabel(idx) ? (
+                <text
+                  key={`xl-${idx}`}
+                  x={p.x}
+                  y={height - 6}
+                  textAnchor="middle"
+                  fontSize="10"
+                  fill="rgba(0,0,0,0.5)"
+                >
+                  {p.label}
+                </text>
+              ) : null
+            )}
+          </svg>
         </div>
       )}
     </div>
@@ -353,14 +402,23 @@ function DashboardLucro() {
         }
       }
 
-      // Pedidos (range do gráfico)
-      const { data: pedidosRange, error: pedidosRangeError } = await supabase
-        .from('orders')
-        .select('id,total,created_at')
-        .gte('created_at', chartStart.toISOString())
-        .lt('created_at', chartEndExclusive.toISOString());
-
-      if (pedidosRangeError) throw pedidosRangeError;
+      // Pedidos (range do gráfico) — paginado para suportar >1000 registros
+      const pedidosRange = [];
+      {
+        const PAGE = 1000;
+        for (let from = 0; ; from += PAGE) {
+          const { data, error } = await supabase
+            .from('orders')
+            .select('id,total,created_at')
+            .gte('created_at', chartStart.toISOString())
+            .lt('created_at', chartEndExclusive.toISOString())
+            .range(from, from + PAGE - 1);
+          if (error) throw error;
+          if (!data || data.length === 0) break;
+          pedidosRange.push(...data);
+          if (data.length < PAGE) break;
+        }
+      }
 
       const orderIdToMonth = {};
       const faturamentoByMonth = months.reduce((acc, m) => {
@@ -369,7 +427,7 @@ function DashboardLucro() {
       }, {});
 
       const allOrderIds = [];
-      (pedidosRange || []).forEach((p) => {
+      pedidosRange.forEach((p) => {
         const createdAt = p?.created_at ? new Date(p.created_at) : null;
         if (!createdAt) return;
         const k = monthKey(createdAt);
@@ -386,18 +444,20 @@ function DashboardLucro() {
       }, {});
 
       if (allOrderIds.length > 0) {
-        const { data: itensRange, error: itensRangeError } = await fetchOrderItemsForOrders(allOrderIds, { withOrderId: true });
-
-        if (itensRangeError) throw itensRangeError;
-
-        (itensRange || []).forEach((i) => {
-          const k = orderIdToMonth[i?.order_id];
-          if (!k) return;
-          const qty = num(i?.qty);
-          if (qty <= 0) return;
-          const unitCost = num(i?.custo_unitario) || num(i?.products?.custo_producao);
-          custosProdutosByMonth[k] += qty * unitCost;
-        });
+        const CHUNK = 200;
+        for (let ci = 0; ci < allOrderIds.length; ci += CHUNK) {
+          const chunk = allOrderIds.slice(ci, ci + CHUNK);
+          const { data: itensChunk, error: itensChunkError } = await fetchOrderItemsForOrders(chunk, { withOrderId: true });
+          if (itensChunkError) throw itensChunkError;
+          (itensChunk || []).forEach((item) => {
+            const k = orderIdToMonth[item?.order_id];
+            if (!k) return;
+            const qty = num(item?.qty);
+            if (qty <= 0) return;
+            const unitCost = num(item?.custo_unitario) || num(item?.products?.custo_producao);
+            custosProdutosByMonth[k] += qty * unitCost;
+          });
+        }
       }
 
       // Série do lucro líquido (mensal)
@@ -421,27 +481,41 @@ function DashboardLucro() {
       const inicioMesISO = inicioMes.toISOString();
       const inicioMesSeguinteISO = inicioMesSeguinte.toISOString();
 
-      // 1) Pedidos do mês (faturamento)
-      const { data: pedidos, error: pedidosError } = await supabase
-        .from('orders')
-        .select('id,total')
-        .gte('created_at', inicioMesISO)
-        .lt('created_at', inicioMesSeguinteISO);
+      // 1) Pedidos do mês (faturamento) — paginado
+      const pedidos = [];
+      {
+        const PAGE = 1000;
+        for (let from = 0; ; from += PAGE) {
+          const { data, error } = await supabase
+            .from('orders')
+            .select('id,total')
+            .gte('created_at', inicioMesISO)
+            .lt('created_at', inicioMesSeguinteISO)
+            .range(from, from + PAGE - 1);
+          if (error) throw error;
+          if (!data || data.length === 0) break;
+          pedidos.push(...data);
+          if (data.length < PAGE) break;
+        }
+      }
 
-      if (pedidosError) throw pedidosError;
+      const faturamento = pedidos.reduce((sum, p) => sum + num(p?.total), 0);
+      const orderIds = pedidos.map((p) => p.id).filter(Boolean);
 
-      const faturamento = (pedidos || []).reduce((sum, p) => sum + num(p?.total), 0);
-      const orderIds = (pedidos || []).map((p) => p.id).filter(Boolean);
-
-      // 2) Custo dos produtos (somatório de qty * custo_producao)
+      // 2) Custo dos produtos (somatório de qty * custo_producao) — em chunks
       let custosProdutos = 0;
       if (orderIds.length > 0) {
-        const { data: itens, error: itensError } = await fetchOrderItemsForOrders(orderIds, { withOrderId: false });
-
-        if (itensError) throw itensError;
+        const CHUNK = 200;
+        const allItens = [];
+        for (let ci = 0; ci < orderIds.length; ci += CHUNK) {
+          const chunk = orderIds.slice(ci, ci + CHUNK);
+          const { data: itensChunk, error: itensChunkError } = await fetchOrderItemsForOrders(chunk, { withOrderId: false });
+          if (itensChunkError) throw itensChunkError;
+          if (itensChunk) allItens.push(...itensChunk);
+        }
 
         let missingCostCount = 0;
-        custosProdutos = (itens || []).reduce((sum, i) => {
+        custosProdutos = allItens.reduce((sum, i) => {
           const qty = num(i?.qty);
           if (qty <= 0) return sum;
           const unitCost = num(i?.custo_unitario) || num(i?.products?.custo_producao);
