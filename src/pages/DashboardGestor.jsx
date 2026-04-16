@@ -56,6 +56,9 @@ function DashboardGestor() {
   const [loadingPromo, setLoadingPromo] = useState(false);
   const [mensagemEnviada, setMensagemEnviada] = useState({});
 
+  const [relatorio, setRelatorio] = useState(null);
+  const [loadingRelatorio, setLoadingRelatorio] = useState(false);
+
   const totalFixosSemSalarios = (custosFixos || []).reduce((acc, c) => acc + (Number(c.valor) || 0), 0);
 
   useEffect(() => {
@@ -324,6 +327,14 @@ function DashboardGestor() {
     if (user?.tipo_acesso !== 'gestor') return;
     if (aba !== 'promocao') return;
     carregarDadosPromocao();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, aba]);
+
+  // Carrega relatório mensal
+  useEffect(() => {
+    if (user?.tipo_acesso !== 'gestor') return;
+    if (aba !== 'relatorio') return;
+    carregarRelatorioMensal();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, aba]);
 
@@ -653,6 +664,180 @@ function DashboardGestor() {
     }
   }
 
+  async function carregarRelatorioMensal() {
+    setLoadingRelatorio(true);
+    try {
+      const hoje = new Date();
+      const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
+      const fimMes = hoje.toISOString().slice(0, 10);
+      const inicioMesPassado = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1).toISOString().slice(0, 10);
+      const fimMesPassado = new Date(hoje.getFullYear(), hoje.getMonth(), 0).toISOString().slice(0, 10);
+
+      const [{ data: pedidosMes }, { data: pedidosMesPassado }] = await Promise.all([
+        supabase
+          .from('orders')
+          .select('id, total, created_at')
+          .gte('created_at', inicioMes + 'T00:00:00')
+          .lte('created_at', fimMes + 'T23:59:59'),
+        supabase
+          .from('orders')
+          .select('total')
+          .gte('created_at', inicioMesPassado + 'T00:00:00')
+          .lte('created_at', fimMesPassado + 'T23:59:59'),
+      ]);
+
+      const receitaMes = (pedidosMes || []).reduce((acc, p) => acc + Number(p.total || 0), 0);
+      const receitaMesPassado = (pedidosMesPassado || []).reduce((acc, p) => acc + Number(p.total || 0), 0);
+      const variacaoReceita = receitaMesPassado > 0
+        ? ((receitaMes - receitaMesPassado) / receitaMesPassado) * 100
+        : null;
+
+      const totalCustos = totalFixosSemSalarios + totalSalarios;
+      const lucro = receitaMes - totalCustos;
+
+      // Itens mais vendidos do mês atual
+      const orderIds = (pedidosMes || []).map((p) => p.id).filter(Boolean);
+      let topItens = [];
+      if (orderIds.length > 0) {
+        const CHUNK = 200;
+        const allItens = [];
+        for (let i = 0; i < orderIds.length; i += CHUNK) {
+          const chunk = orderIds.slice(i, i + CHUNK);
+          const { data } = await supabase
+            .from('vendas_itens')
+            .select('produto_nome, categoria, qty, price')
+            .in('order_id', chunk);
+          if (data) allItens.push(...data);
+        }
+        const itensMap = new Map();
+        allItens.forEach((row) => {
+          const key = String(row?.produto_nome || 'Item');
+          const prev = itensMap.get(key) || { produto_nome: key, categoria: String(row?.categoria || ''), qty: 0, receita: 0 };
+          prev.qty += Number(row?.qty || 0);
+          prev.receita += Number(row?.qty || 0) * Number(row?.price || 0);
+          itensMap.set(key, prev);
+        });
+        topItens = Array.from(itensMap.values())
+          .filter((item) => item.qty > 0)
+          .sort((a, b) => b.qty - a.qty)
+          .slice(0, 10);
+      }
+
+      // Dias da semana (0=Dom … 6=Sáb)
+      const diasNomes = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
+      const diasMap = Array.from({ length: 7 }, (_, i) => ({ dia: diasNomes[i], totalPedidos: 0, totalReceita: 0 }));
+      (pedidosMes || []).forEach((p) => {
+        const d = new Date(p.created_at);
+        if (Number.isNaN(d.getTime())) return;
+        const idx = d.getDay();
+        diasMap[idx].totalPedidos += 1;
+        diasMap[idx].totalReceita += Number(p.total || 0);
+      });
+
+      // Horários com mais pedidos
+      const horariosMap = Array.from({ length: 24 }, (_, i) => ({ hora: i, totalPedidos: 0 }));
+      (pedidosMes || []).forEach((p) => {
+        const d = new Date(p.created_at);
+        if (Number.isNaN(d.getTime())) return;
+        horariosMap[d.getHours()].totalPedidos += 1;
+      });
+      const horariosAtivos = horariosMap.filter((h) => h.totalPedidos > 0);
+
+      setRelatorio({
+        receitaMes,
+        receitaMesPassado,
+        variacaoReceita,
+        totalCustos,
+        lucro,
+        topItens,
+        diasSemana: diasMap,
+        horarios: horariosAtivos,
+      });
+    } catch {
+      setRelatorio(null);
+    } finally {
+      setLoadingRelatorio(false);
+    }
+  }
+
+  function emitirPDF() {
+    if (!relatorio) return;
+    const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const hoje = new Date();
+    const nomeMes = hoje.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+    const titulo = nomeMes.charAt(0).toUpperCase() + nomeMes.slice(1);
+
+    const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Relatório Mensal — ${esc(titulo)}</title><style>
+      *{box-sizing:border-box;margin:0;padding:0}
+      body{font-family:Arial,sans-serif;padding:32px;color:#000;font-size:13px}
+      h1{font-size:20px;font-weight:700;margin-bottom:4px}
+      .sub{color:#666;font-size:12px;margin-bottom:24px}
+      h2{font-size:13px;font-weight:700;margin:24px 0 10px;text-transform:uppercase;letter-spacing:.4px;color:#555}
+      .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-bottom:8px}
+      .kpi{border:1px solid #ddd;border-radius:10px;padding:12px}
+      .kpi__label{font-size:10px;color:#888;margin-bottom:6px;text-transform:uppercase;letter-spacing:.4px}
+      .kpi__value{font-size:20px;font-weight:700}
+      .kpi__delta{font-size:11px;margin-top:4px;color:#888}
+      .pos{color:#007700}.neg{color:#cc2200}
+      table{width:100%;border-collapse:collapse;margin-bottom:4px}
+      th{font-size:11px;color:#666;text-align:left;padding:8px 6px;background:#f5f5f5;border-bottom:1px solid #ddd}
+      td{font-size:12px;padding:8px 6px;border-bottom:1px solid #eee}
+      .bar-wrap{height:10px;background:#eee;border-radius:5px}
+      .bar{height:10px;background:#111;border-radius:5px;min-width:2px}
+      @media print{body{padding:16px}}
+    </style></head><body>
+      <h1>Relatório Mensal</h1>
+      <div class="sub">${esc(titulo)}</div>
+      <h2>Resumo financeiro</h2>
+      <div class="kpis">
+        <div class="kpi">
+          <div class="kpi__label">Receita do mês</div>
+          <div class="kpi__value">R$ ${esc(formatMoney(relatorio.receitaMes))}</div>
+          <div class="kpi__delta ${relatorio.variacaoReceita !== null && relatorio.variacaoReceita >= 0 ? 'pos' : 'neg'}">
+            ${relatorio.variacaoReceita !== null
+              ? `${relatorio.variacaoReceita >= 0 ? '▲' : '▼'} ${Math.abs(relatorio.variacaoReceita).toFixed(1)}% vs. mês anterior`
+              : 'Sem dados do mês anterior'}
+          </div>
+        </div>
+        <div class="kpi">
+          <div class="kpi__label">Total de custos</div>
+          <div class="kpi__value">R$ ${esc(formatMoney(relatorio.totalCustos))}</div>
+          <div class="kpi__delta">Fixos: R$ ${esc(formatMoney(totalFixosSemSalarios))} • Salários: R$ ${esc(formatMoney(totalSalarios))}</div>
+        </div>
+        <div class="kpi">
+          <div class="kpi__label">Lucro estimado</div>
+          <div class="kpi__value ${relatorio.lucro >= 0 ? 'pos' : 'neg'}">R$ ${esc(formatMoney(relatorio.lucro))}</div>
+          <div class="kpi__delta">Receita − Custos totais</div>
+        </div>
+      </div>
+      <h2>Itens mais vendidos</h2>
+      <table><thead><tr><th>#</th><th>Produto</th><th>Categoria</th><th>Qtd</th><th>Receita</th></tr></thead><tbody>
+        ${relatorio.topItens.map((item, i) => `<tr><td>${i + 1}</td><td>${esc(item.produto_nome)}</td><td>${esc(item.categoria)}</td><td>${item.qty}</td><td>R$ ${esc(formatMoney(item.receita))}</td></tr>`).join('')}
+      </tbody></table>
+      <h2>Movimento por dia da semana</h2>
+      <table><thead><tr><th>Dia</th><th>Pedidos</th><th>Receita</th></tr></thead><tbody>
+        ${relatorio.diasSemana.map((d) => `<tr><td>${esc(d.dia)}</td><td>${d.totalPedidos}</td><td>R$ ${esc(formatMoney(d.totalReceita))}</td></tr>`).join('')}
+      </tbody></table>
+      <h2>Horários com mais pedidos</h2>
+      <table><thead><tr><th>Horário</th><th>Pedidos</th><th>Distribuição</th></tr></thead><tbody>
+        ${(() => {
+          const maxH = Math.max(...relatorio.horarios.map((h) => h.totalPedidos), 1);
+          return relatorio.horarios.map((h) => {
+            const pct = Math.round((h.totalPedidos / maxH) * 100);
+            return `<tr><td>${String(h.hora).padStart(2, '0')}h</td><td>${h.totalPedidos}</td><td><div class="bar-wrap"><div class="bar" style="width:${pct}%"></div></div></td></tr>`;
+          }).join('');
+        })()}
+      </tbody></table>
+      <script>window.onload=function(){window.print();}<\/script>
+    </body></html>`;
+
+    const win = window.open('', '_blank', 'width=900,height=700');
+    if (win) {
+      win.document.write(html);
+      win.document.close();
+    }
+  }
+
   function filtrarClientes(lista) {
     const q = buscaCliente.trim().toLowerCase();
     return (lista || [])
@@ -683,6 +868,7 @@ function DashboardGestor() {
           { key: 'vendas', label: 'Relatório de vendas' },
           { key: 'produtos', label: 'Produtos' },
           { key: 'promocao', label: 'Promoção' },
+          { key: 'relatorio', label: 'Relatório Mensal' },
         ].map((t) => {
           const active = aba === t.key;
           return (
@@ -1224,6 +1410,151 @@ function DashboardGestor() {
               </div>
             )}
           </div>
+        </section>
+      )}
+
+      {aba === 'relatorio' && (
+        <section className="dash-card" aria-label="Relatório mensal">
+          <div className="card-head">
+            <div>
+              <div className="card-title">Relatório Mensal</div>
+              <div className="card-sub">
+                {(() => {
+                  const hoje = new Date();
+                  const s = hoje.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+                  return s.charAt(0).toUpperCase() + s.slice(1);
+                })()}
+              </div>
+            </div>
+            <div className="card-actions">
+              <button
+                type="button"
+                className="action-btn action-btn--primary"
+                onClick={emitirPDF}
+                disabled={loadingRelatorio || !relatorio}
+              >
+                Emitir PDF
+              </button>
+            </div>
+          </div>
+
+          {loadingRelatorio ? (
+            <div className="loading">Carregando relatório...</div>
+          ) : !relatorio ? (
+            <div className="empty">Não foi possível carregar o relatório. Tente novamente.</div>
+          ) : (
+            <div className="rel-body">
+
+              {/* ── KPIs ── */}
+              <div className="rel-kpis">
+                <div className="rel-kpi">
+                  <div className="rel-kpi__label">Receita do mês</div>
+                  <div className="rel-kpi__value"><span className="rs">R$</span> {formatMoney(relatorio.receitaMes)}</div>
+                  {relatorio.variacaoReceita !== null ? (
+                    <div className={`rel-kpi__delta ${relatorio.variacaoReceita >= 0 ? 'is-pos' : 'is-neg'}`}>
+                      {relatorio.variacaoReceita >= 0 ? '▲' : '▼'} {Math.abs(relatorio.variacaoReceita).toFixed(1)}% vs. mês anterior
+                    </div>
+                  ) : (
+                    <div className="rel-kpi__delta">Sem dados do mês anterior</div>
+                  )}
+                </div>
+                <div className="rel-kpi">
+                  <div className="rel-kpi__label">Total de custos</div>
+                  <div className="rel-kpi__value"><span className="rs">R$</span> {formatMoney(relatorio.totalCustos)}</div>
+                  <div className="rel-kpi__detail">Fixos: R$ {formatMoney(totalFixosSemSalarios)} • Salários: R$ {formatMoney(totalSalarios)}</div>
+                </div>
+                <div className="rel-kpi">
+                  <div className="rel-kpi__label">Lucro estimado</div>
+                  <div className={`rel-kpi__value ${relatorio.lucro >= 0 ? 'is-pos' : 'is-neg'}`}>
+                    <span className="rs">R$</span> {formatMoney(relatorio.lucro)}
+                  </div>
+                  <div className="rel-kpi__detail">Receita − Custos totais</div>
+                </div>
+              </div>
+
+              {/* ── Itens mais vendidos ── */}
+              <div className="rel-section">
+                <div className="rel-section__title">Itens mais vendidos no mês</div>
+                {relatorio.topItens.length === 0 ? (
+                  <div className="empty">Sem dados de itens para o mês atual. Verifique a tabela "vendas_itens".</div>
+                ) : (
+                  <div className="table-wrap">
+                    <table className="table">
+                      <thead>
+                        <tr>
+                          <th style={{ width: '36px' }}>#</th>
+                          <th>Produto</th>
+                          <th>Categoria</th>
+                          <th style={{ width: '68px' }}>Qtd</th>
+                          <th style={{ width: '110px' }}>Receita</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {relatorio.topItens.map((item, i) => (
+                          <tr key={item.produto_nome}>
+                            <td className="rel-rank">{i + 1}</td>
+                            <td>{item.produto_nome}</td>
+                            <td>{item.categoria}</td>
+                            <td>{item.qty}</td>
+                            <td><span className="rs">R$</span> {formatMoney(item.receita)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+
+              {/* ── Dias mais movimentados ── */}
+              <div className="rel-section">
+                <div className="rel-section__title">Dias mais movimentados da semana</div>
+                <div className="rel-dias">
+                  {(() => {
+                    const maxP = Math.max(...relatorio.diasSemana.map((d) => d.totalPedidos), 1);
+                    return relatorio.diasSemana.map((d) => {
+                      const pct = (d.totalPedidos / maxP) * 100;
+                      return (
+                        <div key={d.dia} className="rel-dia-col" title={`${d.dia}: ${d.totalPedidos} pedidos — R$ ${formatMoney(d.totalReceita)}`}>
+                          <div className="rel-dia-qty">{d.totalPedidos || ''}</div>
+                          <div className="rel-dia-bar-area">
+                            <div className="rel-dia-bar" style={{ height: `${pct}%` }} />
+                          </div>
+                          <div className="rel-dia-name">{d.dia}</div>
+                        </div>
+                      );
+                    });
+                  })()}
+                </div>
+              </div>
+
+              {/* ── Horários com mais pedidos ── */}
+              <div className="rel-section">
+                <div className="rel-section__title">Horários com mais pedidos</div>
+                {relatorio.horarios.length === 0 ? (
+                  <div className="empty">Sem dados de horários para o mês atual.</div>
+                ) : (
+                  <div className="rel-horas">
+                    {(() => {
+                      const maxH = Math.max(...relatorio.horarios.map((h) => h.totalPedidos), 1);
+                      return relatorio.horarios.map((h) => {
+                        const pct = (h.totalPedidos / maxH) * 100;
+                        return (
+                          <div key={h.hora} className="rel-hora-row">
+                            <div className="rel-hora-label">{String(h.hora).padStart(2, '0')}h</div>
+                            <div className="rel-hora-bar-wrap">
+                              <div className="rel-hora-bar" style={{ width: `${pct}%` }} />
+                            </div>
+                            <div className="rel-hora-qty">{h.totalPedidos}</div>
+                          </div>
+                        );
+                      });
+                    })()}
+                  </div>
+                )}
+              </div>
+
+            </div>
+          )}
         </section>
       )}
 
@@ -2255,6 +2586,184 @@ function DashboardGestor() {
           .promo-cupom-item { flex-direction: column; align-items: flex-start; }
           .promo-cupom-actions { margin-left: 0; }
           .promo-cliente-item { flex-direction: column; align-items: flex-start; }
+        }
+
+        /* ── Aba Relatório Mensal ── */
+        .rel-body {
+          display: grid;
+          gap: 16px;
+        }
+
+        .rel-kpis {
+          display: grid;
+          grid-template-columns: repeat(3, minmax(0, 1fr));
+          gap: 12px;
+        }
+
+        @media (max-width: 720px) {
+          .rel-kpis { grid-template-columns: 1fr; }
+        }
+
+        .rel-kpi {
+          border: 1px solid rgba(0,0,0,0.12);
+          border-radius: 14px;
+          padding: 14px;
+          background: rgba(0,0,0,0.02);
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .rel-kpi__label {
+          font-size: 10px;
+          font-weight: 700;
+          color: rgba(0,0,0,0.52);
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+
+        .rel-kpi__value {
+          font-size: 22px;
+          font-weight: 800;
+          color: rgba(0,0,0,0.86);
+          line-height: 1.1;
+        }
+
+        .rel-kpi__value.is-pos { color: #007700; }
+        .rel-kpi__value.is-neg { color: #cc2200; }
+
+        .rel-kpi__delta {
+          font-size: 12px;
+          font-weight: 700;
+          color: rgba(0,0,0,0.52);
+        }
+
+        .rel-kpi__delta.is-pos { color: #007700; }
+        .rel-kpi__delta.is-neg { color: #cc2200; }
+
+        .rel-kpi__detail {
+          font-size: 11px;
+          font-weight: 600;
+          color: rgba(0,0,0,0.42);
+        }
+
+        .rel-section {
+          border: 1px solid rgba(0,0,0,0.10);
+          border-radius: 14px;
+          padding: 14px;
+          background: #fff;
+        }
+
+        .rel-section__title {
+          font-size: 13px;
+          font-weight: 800;
+          color: rgba(0,0,0,0.86);
+          margin-bottom: 12px;
+        }
+
+        .rel-rank {
+          font-weight: 800;
+          color: rgba(0,0,0,0.38);
+          text-align: center;
+        }
+
+        /* Gráfico dias da semana */
+        .rel-dias {
+          display: flex;
+          align-items: stretch;
+          gap: 8px;
+          height: 180px;
+          padding: 0 4px;
+        }
+
+        .rel-dia-col {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          cursor: default;
+        }
+
+        .rel-dia-qty {
+          font-size: 11px;
+          font-weight: 800;
+          color: rgba(0,0,0,0.72);
+          height: 16px;
+          line-height: 16px;
+          flex: 0 0 16px;
+        }
+
+        .rel-dia-bar-area {
+          flex: 1;
+          width: 100%;
+          display: flex;
+          flex-direction: column;
+          justify-content: flex-end;
+          background: rgba(0,0,0,0.06);
+          border-radius: 6px 6px 0 0;
+          margin-top: 4px;
+          overflow: hidden;
+        }
+
+        .rel-dia-bar {
+          width: 100%;
+          background: #000;
+          border-radius: 6px 6px 0 0;
+          min-height: 2px;
+          transition: height 0.35s ease;
+        }
+
+        .rel-dia-name {
+          font-size: 11px;
+          font-weight: 700;
+          color: rgba(0,0,0,0.55);
+          padding-top: 6px;
+          flex: 0 0 20px;
+        }
+
+        /* Gráfico horários */
+        .rel-horas {
+          display: grid;
+          gap: 6px;
+        }
+
+        .rel-hora-row {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+        }
+
+        .rel-hora-label {
+          font-size: 12px;
+          font-weight: 700;
+          color: rgba(0,0,0,0.60);
+          width: 32px;
+          flex: 0 0 32px;
+          text-align: right;
+        }
+
+        .rel-hora-bar-wrap {
+          flex: 1;
+          height: 16px;
+          background: rgba(0,0,0,0.06);
+          border-radius: 4px;
+          overflow: hidden;
+        }
+
+        .rel-hora-bar {
+          height: 100%;
+          background: #000;
+          border-radius: 4px;
+          min-width: 2px;
+          transition: width 0.35s ease;
+        }
+
+        .rel-hora-qty {
+          font-size: 12px;
+          font-weight: 800;
+          color: rgba(0,0,0,0.70);
+          width: 28px;
+          flex: 0 0 28px;
         }
       `}</style>
     </div>
