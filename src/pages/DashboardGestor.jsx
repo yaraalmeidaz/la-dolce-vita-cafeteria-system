@@ -58,6 +58,9 @@ function DashboardGestor() {
 
   const [relatorio, setRelatorio] = useState(null);
   const [loadingRelatorio, setLoadingRelatorio] = useState(false);
+  const hoje = new Date();
+  const [relatorioMes, setRelatorioMes] = useState(hoje.getMonth());
+  const [relatorioAno, setRelatorioAno] = useState(hoje.getFullYear());
 
   const totalFixosSemSalarios = (custosFixos || []).reduce((acc, c) => acc + (Number(c.valor) || 0), 0);
 
@@ -334,9 +337,9 @@ function DashboardGestor() {
   useEffect(() => {
     if (user?.tipo_acesso !== 'gestor') return;
     if (aba !== 'relatorio') return;
-    carregarRelatorioMensal();
+    carregarRelatorioMensal(relatorioMes, relatorioAno);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, aba]);
+  }, [user, aba, relatorioMes, relatorioAno]);
 
   async function carregarPedidos() {
     const requestId = ++pedidosRequestIdRef.current;
@@ -664,27 +667,44 @@ function DashboardGestor() {
     }
   }
 
-  async function carregarRelatorioMensal() {
+  async function carregarRelatorioMensal(mes, ano) {
     setLoadingRelatorio(true);
     try {
-      const hoje = new Date();
-      const inicioMes = new Date(hoje.getFullYear(), hoje.getMonth(), 1).toISOString().slice(0, 10);
-      const fimMes = hoje.toISOString().slice(0, 10);
-      const inicioMesPassado = new Date(hoje.getFullYear(), hoje.getMonth() - 1, 1).toISOString().slice(0, 10);
-      const fimMesPassado = new Date(hoje.getFullYear(), hoje.getMonth(), 0).toISOString().slice(0, 10);
+      const agora = new Date();
+      const ehMesAtual = mes === agora.getMonth() && ano === agora.getFullYear();
+      const inicioMes = new Date(ano, mes, 1).toISOString().slice(0, 10);
+      const fimMes = ehMesAtual
+        ? agora.toISOString().slice(0, 10)
+        : new Date(ano, mes + 1, 0).toISOString().slice(0, 10);
+      const inicioMesPassado = new Date(ano, mes - 1, 1).toISOString().slice(0, 10);
+      const fimMesPassado = new Date(ano, mes, 0).toISOString().slice(0, 10);
 
-      const [{ data: pedidosMes }, { data: pedidosMesPassado }] = await Promise.all([
-        supabase
+      // Busca paginada para suportar meses com mais de 1000 pedidos
+      const PAGE = 1000;
+      const pedidosMes = [];
+      for (let from = 0; ; from += PAGE) {
+        const { data } = await supabase
           .from('orders')
           .select('id, total, created_at')
           .gte('created_at', inicioMes + 'T00:00:00')
-          .lte('created_at', fimMes + 'T23:59:59'),
-        supabase
+          .lte('created_at', fimMes + 'T23:59:59')
+          .range(from, from + PAGE - 1);
+        if (!data || data.length === 0) break;
+        pedidosMes.push(...data);
+        if (data.length < PAGE) break;
+      }
+      const pedidosMesPassado = [];
+      for (let from = 0; ; from += PAGE) {
+        const { data } = await supabase
           .from('orders')
           .select('total')
           .gte('created_at', inicioMesPassado + 'T00:00:00')
-          .lte('created_at', fimMesPassado + 'T23:59:59'),
-      ]);
+          .lte('created_at', fimMesPassado + 'T23:59:59')
+          .range(from, from + PAGE - 1);
+        if (!data || data.length === 0) break;
+        pedidosMesPassado.push(...data);
+        if (data.length < PAGE) break;
+      }
 
       const receitaMes = (pedidosMes || []).reduce((acc, p) => acc + Number(p.total || 0), 0);
       const receitaMesPassado = (pedidosMesPassado || []).reduce((acc, p) => acc + Number(p.total || 0), 0);
@@ -692,14 +712,47 @@ function DashboardGestor() {
         ? ((receitaMes - receitaMesPassado) / receitaMesPassado) * 100
         : null;
 
-      const totalCustos = totalFixosSemSalarios + totalSalarios;
-      const lucro = receitaMes - totalCustos;
-
-      // Itens mais vendidos do mês atual
+      // Custo de insumos: busca order_items do mês e soma qty * custo_unitario
+      // Se custo_unitario for 0, tenta custo_producao do produto
       const orderIds = (pedidosMes || []).map((p) => p.id).filter(Boolean);
+      let custoInsumos = 0;
       let topItens = [];
+
       if (orderIds.length > 0) {
         const CHUNK = 200;
+        const allOrderItems = [];
+        for (let i = 0; i < orderIds.length; i += CHUNK) {
+          const chunk = orderIds.slice(i, i + CHUNK);
+          const { data } = await supabase
+            .from('order_items')
+            .select('product_id, qty, custo_unitario')
+            .in('order_id', chunk);
+          if (data) allOrderItems.push(...data);
+        }
+
+        // Busca custo_producao de TODOS os produtos únicos do mês (fallback por item)
+        const prodIds = [...new Set(allOrderItems.map((r) => r.product_id).filter(Boolean))];
+        const custoProdMap = new Map();
+        if (prodIds.length > 0) {
+          for (let i = 0; i < prodIds.length; i += CHUNK) {
+            const chunk = prodIds.slice(i, i + CHUNK);
+            const { data: prods } = await supabase
+              .from('products')
+              .select('id_produto, custo_producao')
+              .in('id_produto', chunk);
+            (prods || []).forEach((p) => custoProdMap.set(p.id_produto, Number(p.custo_producao || 0)));
+          }
+        }
+
+        // Por item: usa custo_unitario se > 0, senão usa custo_producao do produto
+        custoInsumos = allOrderItems.reduce((acc, r) => {
+          const custo = Number(r.custo_unitario || 0) > 0
+            ? Number(r.custo_unitario)
+            : (custoProdMap.get(r.product_id) || 0);
+          return acc + Number(r.qty || 0) * custo;
+        }, 0);
+
+        // Itens mais vendidos (reutiliza order_items já buscados para vendas_itens)
         const allItens = [];
         for (let i = 0; i < orderIds.length; i += CHUNK) {
           const chunk = orderIds.slice(i, i + CHUNK);
@@ -722,6 +775,9 @@ function DashboardGestor() {
           .sort((a, b) => b.qty - a.qty)
           .slice(0, 10);
       }
+
+      const totalCustos = totalFixosSemSalarios + totalSalarios + custoInsumos;
+      const lucro = receitaMes - totalCustos;
 
       // Dias da semana (0=Dom … 6=Sáb)
       const diasNomes = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
@@ -747,6 +803,7 @@ function DashboardGestor() {
         receitaMes,
         receitaMesPassado,
         variacaoReceita,
+        custoInsumos,
         totalCustos,
         lucro,
         topItens,
@@ -763,8 +820,7 @@ function DashboardGestor() {
   function emitirPDF() {
     if (!relatorio) return;
     const esc = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    const hoje = new Date();
-    const nomeMes = hoje.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+    const nomeMes = new Date(relatorioAno, relatorioMes, 1).toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
     const titulo = nomeMes.charAt(0).toUpperCase() + nomeMes.slice(1);
 
     const html = `<!DOCTYPE html><html lang="pt-BR"><head><meta charset="UTF-8"><title>Relatório Mensal — ${esc(titulo)}</title><style>
@@ -802,7 +858,7 @@ function DashboardGestor() {
         <div class="kpi">
           <div class="kpi__label">Total de custos</div>
           <div class="kpi__value">R$ ${esc(formatMoney(relatorio.totalCustos))}</div>
-          <div class="kpi__delta">Fixos: R$ ${esc(formatMoney(totalFixosSemSalarios))} • Salários: R$ ${esc(formatMoney(totalSalarios))}</div>
+          <div class="kpi__delta">Fixos: R$ ${esc(formatMoney(totalFixosSemSalarios))} • Salários: R$ ${esc(formatMoney(totalSalarios))} • Insumos: R$ ${esc(formatMoney(relatorio.custoInsumos))}</div>
         </div>
         <div class="kpi">
           <div class="kpi__label">Lucro estimado</div>
@@ -1415,23 +1471,51 @@ function DashboardGestor() {
 
       {aba === 'relatorio' && (
         <section className="dash-card" aria-label="Relatório mensal">
-          <div className="card-head">
+          <div className="card-head card-head--vendas">
             <div>
               <div className="card-title">Relatório Mensal</div>
               <div className="card-sub">
                 {(() => {
-                  const hoje = new Date();
-                  const s = hoje.toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
+                  const s = new Date(relatorioAno, relatorioMes, 1).toLocaleString('pt-BR', { month: 'long', year: 'numeric' });
                   return s.charAt(0).toUpperCase() + s.slice(1);
                 })()}
               </div>
             </div>
-            <div className="card-actions">
+            <div className="filters" style={{ marginTop: 10 }}>
+              <label className="label">Mês
+                <div className="select-wrap">
+                  <select
+                    className="select"
+                    value={relatorioMes}
+                    onChange={(e) => setRelatorioMes(Number(e.target.value))}
+                  >
+                    {['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'].map((m, i) => (
+                      <option key={i} value={i}>{m}</option>
+                    ))}
+                  </select>
+                  <span className="select-arrow" aria-hidden="true" />
+                </div>
+              </label>
+              <label className="label">Ano
+                <div className="select-wrap">
+                  <select
+                    className="select"
+                    value={relatorioAno}
+                    onChange={(e) => setRelatorioAno(Number(e.target.value))}
+                  >
+                    {Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - i).map((a) => (
+                      <option key={a} value={a}>{a}</option>
+                    ))}
+                  </select>
+                  <span className="select-arrow" aria-hidden="true" />
+                </div>
+              </label>
               <button
                 type="button"
                 className="action-btn action-btn--primary"
                 onClick={emitirPDF}
                 disabled={loadingRelatorio || !relatorio}
+                style={{ alignSelf: 'flex-end' }}
               >
                 Emitir PDF
               </button>
@@ -1461,7 +1545,7 @@ function DashboardGestor() {
                 <div className="rel-kpi">
                   <div className="rel-kpi__label">Total de custos</div>
                   <div className="rel-kpi__value"><span className="rs">R$</span> {formatMoney(relatorio.totalCustos)}</div>
-                  <div className="rel-kpi__detail">Fixos: R$ {formatMoney(totalFixosSemSalarios)} • Salários: R$ {formatMoney(totalSalarios)}</div>
+                  <div className="rel-kpi__detail">Fixos: R$ {formatMoney(totalFixosSemSalarios)} • Salários: R$ {formatMoney(totalSalarios)} • Insumos: R$ {formatMoney(relatorio.custoInsumos)}</div>
                 </div>
                 <div className="rel-kpi">
                   <div className="rel-kpi__label">Lucro estimado</div>
@@ -1596,18 +1680,15 @@ function DashboardGestor() {
 
         .dash-tabs {
           display: flex;
+          flex-wrap: wrap;
           justify-content: center;
-          gap: 14px;
+          gap: 8px 14px;
           padding: 10px 12px;
           border: 1px solid rgba(0,0,0,0.10);
           border-radius: 14px;
           background: #fff;
           margin-bottom: 16px;
-          overflow-x: auto;
-          scrollbar-width: none;
         }
-
-        .dash-tabs::-webkit-scrollbar { display: none; }
 
         .dash-tab {
           border: none;
@@ -2263,9 +2344,7 @@ function DashboardGestor() {
         @media (max-width: 520px) {
           .dash-card { padding: 14px; }
           .dash-tabs {
-            flex-wrap: wrap;
-            justify-content: center;
-            overflow-x: hidden;
+            gap: 4px 10px;
           }
           .cost-item {
             flex-direction: column;
